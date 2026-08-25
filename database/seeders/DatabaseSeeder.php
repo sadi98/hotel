@@ -2,10 +2,9 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
+
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\Hash;
 
 class DatabaseSeeder extends Seeder
 {
@@ -19,7 +18,11 @@ class DatabaseSeeder extends Seeder
         // User::factory(10)->create();
 
         $this->call([
-            HotelBookingSeeder::class,
+            UserSeeder::class,
+            CategorySeeder::class,
+            MenuItemSeeder::class,
+            MenuPackageSeeder::class,
+            RestaurantTableSeeder::class,
         ]);
     }
 }

@@ -7,39 +7,46 @@
                 <li class="{{ request()->is('/') ? 'active' : '' }}">
                     <a href="{{ url('/') }}">
                         <i class="lni lni-home"></i>
-                        Home
+                        <span>Home</span>
                     </a>
                 </li>
 
-                {{-- Support --}}
-                <li class="{{ request()->is('support*') ? 'active' : '' }}">
-                    <a href="#">
-                        <i class="lni lni-life-ring"></i>
-                        Support
+                {{-- Menu --}}
+                <li class="{{ request()->is('menus*') || request()->is('packages*') ? 'active' : '' }}">
+                    <a href="{{ route('menus.index') }}">
+                        <i class="lni lni-dinner"></i>
+                        <span>Menu</span>
                     </a>
                 </li>
 
-                {{-- Cart --}}
-                <li class="{{ request()->is('cart*') ? 'active' : '' }}">
-                    <a href="#">
+                {{-- Camera / QR Scanner --}}
+                <li
+                    class="footer-camera-item {{ request()->is('camera*') || request()->is('camera*') ? 'active' : '' }}">
+                    <a href="{{ route('camera') }}">
+                        <span class="footer-camera-circle">
+                            <i class="lni lni-camera"></i>
+                        </span>
+
+                        <span class="footer-camera-label">
+                            Scan QR
+                        </span>
+                    </a>
+                </li>
+
+                {{-- Reservation --}}
+                <li class="{{ request()->is('reservations*') ? 'active' : '' }}">
+                    <a href="{{ route('reservations.create') }}">
+                        <i class="lni lni-calendar"></i>
+                        <span>Reservation</span>
+                    </a>
+                </li>
+
+                {{-- Orders --}}
+                <li class="{{ request()->is('orders*') || request()->is('cart*') ? 'active' : '' }}">
+                    <a
+                        href="{{ auth()->check() && auth()->user()->isUser() ? route('orders.history') : route('cart.index') }}">
                         <i class="lni lni-shopping-basket"></i>
-                        Cart
-                    </a>
-                </li>
-
-                {{-- Pages --}}
-                <li class="{{ request()->is('pages*') ? 'active' : '' }}">
-                    <a href="#">
-                        <i class="lni lni-heart"></i>
-                        Pages
-                    </a>
-                </li>
-
-                {{-- Settings --}}
-                <li class="{{ request()->is('setting*') ? 'active' : '' }}">
-                    <a href="{{ route('setting') }}">
-                        <i class="lni lni-cog"></i>
-                        Settings
+                        <span>Orders</span>
                     </a>
                 </li>
 

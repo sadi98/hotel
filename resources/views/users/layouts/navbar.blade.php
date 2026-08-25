@@ -2,8 +2,8 @@
 <div class="header-area" id="headerArea">
     <div class="container h-100 d-flex align-items-center justify-content-between">
         <!-- Logo Wrapper-->
-        <div class="logo-wrapper"><a href="home.html"><img src="{{ asset('users/img/core-img/logo-small.png') }}"
-                    alt=""></a>
+        <div class="logo-wrapper"><a href="{{ route('home') }}"><img src="{{ asset('users/img/icons/logo.jpeg') }}"
+                    alt="" style="width: 50px"></a>
         </div>
         <!-- Search Form-->
         <div class="top-search-form">

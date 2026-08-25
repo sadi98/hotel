@@ -5,38 +5,50 @@
         aria-label="Close"></button>
     <!-- Offcanvas body-->
     <div class="offcanvas-body">
-        <!-- Sidenav Profile-->
-        <div class="sidenav-profile">
-            <div class="user-profile"><img src="{{ asset('users/img/bg-img/9.jpg') }}" alt=""></div>
-            <div class="user-info">
-                <h6 class="user-name mb-1">Suha Sarah</h6>
-                <p class="available-balance">Total balance $<span class="counter">583.67</span></p>
+        @guest
+            <!-- Sidenav Profile-->
+            <div class="sidenav-profile">
+                <div class="user-profile"><img src="{{ asset('users/img/bg-img/9.jpg') }}" alt=""></div>
+                <div class="user-info">
+                    <h6 class="user-name mb-1">Guest</h6>
+                </div>
             </div>
-        </div>
-        <!-- Sidenav Nav-->
-        <ul class="sidenav-nav ps-0">
-            <li><a href="{{ route('profile') }}"><i class="lni lni-user"></i>My Profile</a></li>
-            <li><a href="notifications.html"><i class="lni lni-alarm lni-tada-effect"></i>Notifications<span
-                        class="ms-3 badge badge-warning">3</span></a></li>
-            <li class="suha-dropdown-menu"><a href="#"><i class="lni lni-cart"></i>Shop Pages</a>
-                <ul>
-                    <li><a href="shop-grid.html">- Shop Grid</a></li>
-                    <li><a href="shop-list.html">- Shop List</a></li>
-                    <li><a href="single-product.html">- Product Details</a></li>
-                    <li><a href="featured-products.html">- Featured Products</a></li>
-                    <li><a href="flash-sale.html">- Flash Sale</a></li>
-                </ul>
-            </li>
-            <li><a href="pages.html"><i class="lni lni-empty-file"></i>All Pages</a></li>
-            <li class="suha-dropdown-menu"><a href="wishlist-grid.html"><i class="lni lni-heart"></i>My
-                    Wishlist</a>
-                <ul>
-                    <li><a href="wishlist-grid.html">- Wishlist Grid</a></li>
-                    <li><a href="wishlist-list.html">- Wishlist List</a></li>
-                </ul>
-            </li>
-            <li><a href="{{ route('setting') }}"><i class="lni lni-cog"></i>Settings</a></li>
-            <li><a href="intro.html"><i class="lni lni-power-switch"></i>Sign Out</a></li>
-        </ul>
+            <!-- Sidenav Nav-->
+            <ul class="sidenav-nav ps-0">
+                @if (Route::has('login'))
+                    <li><a href="{{ route('login') }}"><i class="lni lni-enter"></i> Sign in</a></li>
+                @endif
+
+                @if (Route::has('register'))
+                    <li><a href="{{ route('register') }}"><i class="lni lni-circle-plus"></i> Sign up</a></li>
+                @endif
+            </ul>
+        @else
+            <!-- Sidenav Profile-->
+            <div class="sidenav-profile">
+                <div class="user-profile">
+                    @if (Auth::user()->avatar)
+                        <img src="{{ asset('storage/user/profile/' . Auth::user()->avatar) }}" alt="">
+                    @else
+                        <img src="{{ asset('users/img/bg-img/9.jpg') }}" alt="">
+                    @endif
+                </div>
+                <div class="user-info">
+                    <h6 class="user-name mb-1">{{ Auth::user()->name }}</h6>
+                    <p class="available-balance">{{ Auth::user()->email }}</p>
+                </div>
+            </div>
+            <!-- Sidenav Nav-->
+            <ul class="sidenav-nav ps-0">
+                <li><a href="{{ route('profile') }}"><i class="lni lni-user"></i>My Profile</a></li>
+                <li><a href="{{ route('setting') }}"><i class="lni lni-cog"></i>Settings</a></li>
+                <li><a href="{{ route('logout') }}"
+                        onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i
+                            class="lni lni-power-switch"></i>Sign Out</a></li>
+                <form id="logout-form" action="{{ route('logout') }}" method="POST" class="d-none">
+                    @csrf
+                </form>
+            </ul>
+        @endguest
     </div>
 </div>

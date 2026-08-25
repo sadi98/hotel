@@ -21,7 +21,7 @@
         href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&amp;display=swap"
         rel="stylesheet">
     <!-- Favicon-->
-    <link rel="icon" href="{{ asset('users/img/icons/icon-72x72.png') }}">
+    <link rel="icon" href="https://ayakasuites.com/wp-content/uploads/2019/07/favicon.jpg">
     <!-- Apple Touch Icon-->
     <link rel="apple-touch-icon" href="{{ asset('users/img/icons/icon-96x96.png') }}">
     <link rel="apple-touch-icon" sizes="152x152" href="{{ asset('users/img/icons/icon-152x152.png') }}">
@@ -36,6 +36,7 @@
     <link rel="stylesheet" href="{{ asset('users/css/magnific-popup.css') }}">
     <!-- Stylesheet-->
     <link rel="stylesheet" href="{{ asset('users/style.css') }}">
+    <link rel="stylesheet" href="{{ asset('users/css/custom-button.css') }}">
     <!-- Web App Manifest-->
     <link rel="manifest" href="{{ asset('users/manifest.json') }}">
     @stack('style')
@@ -59,6 +60,7 @@
     <!-- Footer Nav-->
     @include('users.layouts.menubar')
     @include('users.layouts.scripts')
+    @stack('script')
 </body>
 
 </html>
