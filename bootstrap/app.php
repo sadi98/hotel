@@ -19,21 +19,43 @@ return Application::configure(
         commands: __DIR__ . '/../routes/console.php',
         health: '/up',
     )
-    ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->validateCsrfTokens(except: ['webhooks/midtrans']);
+    ->withMiddleware(function (
+        Middleware $middleware
+    ): void {
+        /*
+         * Webhook Midtrans tidak menggunakan CSRF browser.
+         */
+        $middleware->validateCsrfTokens(
+            except: [
+                'webhooks/midtrans',
+            ]
+        );
 
+        /*
+         * Alias middleware project.
+         */
         $middleware->alias([
             'guest.user' => GuestUser::class,
             'guest.staff' => GuestStaff::class,
             'auth.user' => EnsureUserRole::class,
             'auth.admin' => EnsureAdminRole::class,
             'auth.staff' => EnsureStaffRole::class,
-            'auth.staff_or_admin' => EnsureStaffOrAdminRole::class,
+            'auth.staff_or_admin' =>
+            EnsureStaffOrAdminRole::class,
         ]);
 
+        /*
+         * Redirect untuk middleware auth bawaan Laravel.
+         * Middleware role buatan kita tetap menangani
+         * masing-masing guard secara eksplisit.
+         */
         $middleware->redirectGuestsTo(
-            function (Request $request): string {
+            function (
+                Request $request
+            ): string {
                 if (
+                    $request->is('management') ||
+                    $request->is('management/*') ||
                     $request->is('admin/*') ||
                     $request->is('staff/*')
                 ) {
@@ -45,22 +67,31 @@ return Application::configure(
         );
 
         $middleware->redirectUsersTo(
-            function (Request $request): string {
-                $user = $request->user();
+            function (
+                Request $request
+            ): string {
+                $staffUser = $request->user(
+                    'staff'
+                );
 
-                if (!$user) {
-                    return route('login');
+                if (
+                    $staffUser &&
+                    in_array(
+                        $staffUser->role,
+                        ['admin', 'staff'],
+                        true
+                    )
+                ) {
+                    return route('dashboard');
                 }
 
-                return match ($user->role) {
-                    'admin' => route('admin.dashboard'),
-                    'staff' => route('staff.dashboard'),
-                    default => route('home'),
-                };
+                return route('home');
             }
         );
     })
-    ->withExceptions(function (Exceptions $exceptions): void {
+    ->withExceptions(function (
+        Exceptions $exceptions
+    ): void {
         //
     })
     ->create();

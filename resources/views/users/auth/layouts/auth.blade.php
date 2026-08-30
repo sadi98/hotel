@@ -8,12 +8,16 @@
 
     <meta name="csrf-token" content="{{ csrf_token() }}">
 
+    <meta name="description" content="Kayu Manis Restaurant - Ayaka Suites">
     <title>
         @yield('title', 'Kayu Manis Restaurant - Ayaka Suites')
     </title>
 
     {{-- Bootstrap Icons --}}
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
+
+    {{-- icon web --}}
+    <link rel="icon" type="image/x-icon" href="{{ asset('users/img/icons/logo.jpeg') }}">
 
     {{-- Google Fonts --}}
     <link rel="preconnect" href="https://fonts.googleapis.com">

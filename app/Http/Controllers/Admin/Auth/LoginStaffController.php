@@ -21,60 +21,57 @@ class LoginStaffController extends Controller
     public function store(
         Request $request
     ): RedirectResponse {
-        $credentials = $request->validate(
-            [
-                'login' => [
-                    'required',
-                    'string',
-                    'max:255',
-                ],
-                'password' => [
-                    'required',
-                    'string',
-                ],
-                'remember' => [
-                    'nullable',
-                    'boolean',
-                ],
+        $validated = $request->validate([
+            'login' => [
+                'required',
+                'string',
+                'max:255',
             ],
-            [
-                'login.required' => 'Please enter your email address or username.',
-                'password.required' => 'Please enter your password.',
-            ]
-        );
+            'password' => [
+                'required',
+                'string',
+            ],
+            'remember' => [
+                'nullable',
+                'boolean',
+            ],
+        ]);
 
-        $login = trim($credentials['login']);
+        $login = trim($validated['login']);
 
-        $loginField = filter_var(
+        $field = filter_var(
             $login,
             FILTER_VALIDATE_EMAIL
-        )
-            ? 'email'
-            : 'username';
+        ) ? 'email' : 'username';
 
-        $throttleKey = Str::transliterate(
-            Str::lower($login) . '|' . $request->ip()
+        if ($field === 'email') {
+            $login = Str::lower($login);
+        }
+
+        $rateKey = Str::lower(
+            $login . '|management|' . $request->ip()
         );
 
         if (
             RateLimiter::tooManyAttempts(
-                $throttleKey,
+                $rateKey,
                 5
             )
         ) {
             $seconds = RateLimiter::availableIn(
-                $throttleKey
+                $rateKey
             );
 
             throw ValidationException::withMessages([
-                'login' => "Too many sign-in attempts. Please try again in {$seconds} seconds.",
+                'login' =>
+                "Too many login attempts. Try again in {$seconds} seconds.",
             ]);
         }
 
-        $loginSuccessful = Auth::attempt(
+        $success = Auth::guard('staff')->attempt(
             [
-                $loginField => $login,
-                'password' => $credentials['password'],
+                $field => $login,
+                'password' => $validated['password'],
                 function ($query) {
                     $query->whereIn(
                         'role',
@@ -85,67 +82,64 @@ class LoginStaffController extends Controller
             $request->boolean('remember')
         );
 
-        if (!$loginSuccessful) {
-            RateLimiter::hit($throttleKey, 60);
+        if (!$success) {
+            RateLimiter::hit(
+                $rateKey,
+                60
+            );
 
             throw ValidationException::withMessages([
-                'login' => 'The provided credentials are incorrect.',
+                'login' =>
+                'Email, username, or password is incorrect.',
             ]);
         }
 
-        RateLimiter::clear($throttleKey);
+        RateLimiter::clear($rateKey);
 
         $request->session()->regenerate();
 
-        return match (Auth::user()->role) {
-            'admin' => redirect()
-                ->intended(route('admin.dashboard'))
-                ->with(
-                    'success',
-                    'Welcome back, Administrator.'
-                ),
+        $user = Auth::guard('staff')->user();
 
-            'staff' => redirect()
-                ->intended(route('staff.dashboard'))
-                ->with(
-                    'success',
-                    'Welcome back.'
-                ),
-
-            default => $this->rejectUnauthorizedRole(
-                $request
-            ),
-        };
+        return redirect()
+            ->intended(route('dashboard'))
+            ->with(
+                'success',
+                $user->role === 'admin'
+                    ? 'Welcome back, Administrator.'
+                    : 'Welcome back.'
+            );
     }
 
     public function destroy(
         Request $request
     ): RedirectResponse {
-        Auth::logout();
+        $guard = Auth::guard('staff');
 
-        $request->session()->invalidate();
+        $guard->logout();
+
+        // Jangan invalidate seluruh session,
+        // karena user mungkin masih login pada guard web.
+        $request->session()->forget(
+            $guard->getName()
+        );
+
         $request->session()->regenerateToken();
 
         return redirect()
             ->route('login.staff')
-            ->with(
-                'success',
-                'You have signed out successfully.'
-            );
+            ->with('success', 'You have signed out.');
     }
 
-    private function rejectUnauthorizedRole(
+    private function logoutInvalidUser(
         Request $request
     ): RedirectResponse {
-        Auth::logout();
-
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
+        Auth::guard('staff')->logout();
 
         return redirect()
             ->route('login.staff')
             ->withErrors([
-                'login' => 'You are not authorized to access the management area.',
+                'login' =>
+                'You are not authorized to access management.',
             ]);
     }
 }

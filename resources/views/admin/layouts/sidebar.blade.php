@@ -5,10 +5,11 @@
                 <!-- Sidenav Menu Heading (Core)-->
                 <div class="sidenav-menu-heading">Core</div>
                 <!-- Sidenav Accordion (Dashboard)-->
-                <a class="nav-link {{ request()->is('dashboard*') ? 'active' : '' }}" href="{{ route('dashboard') }}">
+                <a class="nav-link {{ request()->routeIs('dashboard') ? 'active' : '' }}" href="{{ route('dashboard') }}">
                     <div class="nav-link-icon">
                         <i data-feather="activity"></i>
                     </div>
+
                     Dashboards
                 </a>
                 <!-- Sidenav Heading (Custom)-->

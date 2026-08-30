@@ -13,27 +13,37 @@ class EnsureStaffRole
         Request $request,
         Closure $next
     ): Response {
-        if (!Auth::check()) {
+        $guard = Auth::guard('staff');
+
+        if (!$guard->check()) {
             return redirect()
                 ->route('login.staff')
                 ->withErrors([
-                    'auth' => 'Please sign in as a staff member.',
+                    'auth' =>
+                    'Please sign in as a staff member.',
                 ]);
         }
 
-        if (Auth::user()->role !== 'staff') {
-            return $this->redirectToCorrectPage();
+        $user = $guard->user();
+
+        if ($user->role !== 'staff') {
+            if ($user->role === 'admin') {
+                return redirect()
+                    ->route('dashboard')
+                    ->withErrors([
+                        'auth' =>
+                        'This page is only available to staff members.',
+                    ]);
+            }
+
+            $guard->logout();
+
+            return redirect()
+                ->route('login.staff');
         }
 
-        return $next($request);
-    }
+        Auth::shouldUse('staff');
 
-    private function redirectToCorrectPage(): Response
-    {
-        return match (Auth::user()->role) {
-            'admin' => redirect()->route('admin.dashboard'),
-            'user' => redirect()->route('home'),
-            default => abort(403, 'You are not authorized to access this page.'),
-        };
+        return $next($request);
     }
 }

@@ -13,27 +13,37 @@ class EnsureAdminRole
         Request $request,
         Closure $next
     ): Response {
-        if (!Auth::check()) {
+        $guard = Auth::guard('staff');
+
+        if (!$guard->check()) {
             return redirect()
                 ->route('login.staff')
                 ->withErrors([
-                    'auth' => 'Please sign in as an administrator.',
+                    'auth' =>
+                    'Please sign in as an administrator.',
                 ]);
         }
 
-        if (Auth::user()->role !== 'admin') {
-            return $this->redirectToCorrectPage();
+        $user = $guard->user();
+
+        if ($user->role !== 'admin') {
+            if ($user->role === 'staff') {
+                return redirect()
+                    ->route('dashboard')
+                    ->withErrors([
+                        'auth' =>
+                        'This page is only available to administrators.',
+                    ]);
+            }
+
+            $guard->logout();
+
+            return redirect()
+                ->route('login.staff');
         }
 
-        return $next($request);
-    }
+        Auth::shouldUse('staff');
 
-    private function redirectToCorrectPage(): Response
-    {
-        return match (Auth::user()->role) {
-            'staff' => redirect()->route('staff.dashboard'),
-            'user' => redirect()->route('home'),
-            default => abort(403, 'You are not authorized to access this page.'),
-        };
+        return $next($request);
     }
 }

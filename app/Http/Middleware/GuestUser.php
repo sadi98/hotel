@@ -13,21 +13,35 @@ class GuestUser
         Request $request,
         Closure $next
     ): Response {
-        if (!Auth::check()) {
+        $guard = Auth::guard('web');
+
+        /*
+         * Login admin/staff pada guard staff tidak akan
+         * menghalangi halaman login user.
+         */
+        if (!$guard->check()) {
             return $next($request);
         }
 
-        return $this->redirectAuthenticatedUser();
-    }
+        $user = $guard->user();
 
-    private function redirectAuthenticatedUser(): Response
-    {
-        $user = Auth::user();
+        if ($user->role === 'user') {
+            return redirect()
+                ->route('home');
+        }
 
-        return match ($user->role) {
-            'admin' => redirect()->route('admin.dashboard'),
-            'staff' => redirect()->route('staff.dashboard'),
-            default => redirect()->route('home'),
-        };
+        /*
+         * Jika admin/staff tidak sengaja tersimpan pada
+         * guard web, bersihkan sesi web tersebut.
+         */
+        $guard->logout();
+
+        $request->session()->forget(
+            $guard->getName()
+        );
+
+        $request->session()->regenerateToken();
+
+        return $next($request);
     }
 }

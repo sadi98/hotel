@@ -13,21 +13,43 @@ class EnsureStaffOrAdminRole
         Request $request,
         Closure $next
     ): Response {
-        if (!Auth::check()) {
+        $guard = Auth::guard('staff');
+
+        if (!$guard->check()) {
             return redirect()
                 ->route('login.staff')
                 ->withErrors([
-                    'auth' => 'Please sign in to access the management area.',
+                    'auth' =>
+                    'Please sign in to access the management area.',
                 ]);
         }
 
-        if (!in_array(Auth::user()->role, ['admin', 'staff'], true)) {
+        $user = $guard->user();
+
+        if (
+            !in_array(
+                $user->role,
+                ['admin', 'staff'],
+                true
+            )
+        ) {
+            $guard->logout();
+
+            $request->session()->forget(
+                $guard->getName()
+            );
+
+            $request->session()->regenerateToken();
+
             return redirect()
-                ->route('home')
+                ->route('login.staff')
                 ->withErrors([
-                    'auth' => 'You are not authorized to access the management area.',
+                    'auth' =>
+                    'You are not authorized to access management.',
                 ]);
         }
+
+        Auth::shouldUse('staff');
 
         return $next($request);
     }

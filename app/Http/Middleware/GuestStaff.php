@@ -13,16 +13,33 @@ class GuestStaff
         Request $request,
         Closure $next
     ): Response {
-        if (!Auth::check()) {
+        $guard = Auth::guard('staff');
+
+        if (!$guard->check()) {
             return $next($request);
         }
 
-        $user = Auth::user();
+        $user = $guard->user();
 
-        return match ($user->role) {
-            'admin' => redirect()->route('admin.dashboard'),
-            'staff' => redirect()->route('staff.dashboard'),
-            default => redirect()->route('home'),
-        };
+        if (
+            in_array(
+                $user->role,
+                ['admin', 'staff'],
+                true
+            )
+        ) {
+            return redirect()
+                ->route('dashboard');
+        }
+
+        $guard->logout();
+
+        $request->session()->forget(
+            $guard->getName()
+        );
+
+        $request->session()->regenerateToken();
+
+        return $next($request);
     }
 }

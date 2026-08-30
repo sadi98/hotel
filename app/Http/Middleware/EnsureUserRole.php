@@ -13,7 +13,9 @@ class EnsureUserRole
         Request $request,
         Closure $next
     ): Response {
-        if (!Auth::check()) {
+        $guard = Auth::guard('web');
+
+        if (!$guard->check()) {
             return redirect()
                 ->route('login')
                 ->withErrors([
@@ -21,19 +23,36 @@ class EnsureUserRole
                 ]);
         }
 
-        if (Auth::user()->role !== 'user') {
-            return $this->redirectToCorrectDashboard();
+        $user = $guard->user();
+
+        if ($user->role !== 'user') {
+            return $this->rejectInvalidUserSession(
+                $request
+            );
         }
+
+        Auth::shouldUse('web');
 
         return $next($request);
     }
 
-    private function redirectToCorrectDashboard(): Response
-    {
-        return match (Auth::user()->role) {
-            'admin' => redirect()->route('admin.dashboard'),
-            'staff' => redirect()->route('staff.dashboard'),
-            default => abort(403, 'You are not authorized to access this page.'),
-        };
+    private function rejectInvalidUserSession(
+        Request $request
+    ): Response {
+        $guard = Auth::guard('web');
+
+        $guard->logout();
+
+        $request->session()->forget(
+            $guard->getName()
+        );
+
+        $request->session()->regenerateToken();
+
+        return redirect()
+            ->route('login')
+            ->withErrors([
+                'auth' => 'Please use a user account to access this page.',
+            ]);
     }
 }
