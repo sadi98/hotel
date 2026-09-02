@@ -20,6 +20,7 @@ return new class extends Migration
             $table->string('google_id')->nullable()->unique();
             $table->string('avatar')->nullable();
             $table->enum('gender', ['male', 'female'])->nullable();
+            $table->date('date_of_birth')->nullable();
             $table->enum('role', ['admin', 'staff', 'user'])->default('user');
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password')->nullable();

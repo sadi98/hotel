@@ -368,9 +368,10 @@ class ForgotPasswordStaffController extends Controller
                     'created_at' => now(),
                 ]
             );
+        // dd($user);
 
         Mail::send(
-            'admin.auth.emails.password-otp',
+            'admin.auth.password-otp',
             [
                 'user' => $user,
                 'otp' => $otp,

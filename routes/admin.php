@@ -4,6 +4,7 @@ use App\Http\Controllers\Admin\Auth\ForgotPasswordStaffController;
 use App\Http\Controllers\Admin\Auth\LoginStaffController;
 use App\Http\Controllers\Admin\RestaurantOrderController;
 use App\Http\Controllers\Admin\RestaurantReservationController;
+use App\Http\Controllers\Admin\ProfileAdminController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -71,15 +72,36 @@ Route::prefix('management')
         /*
          * Satu dashboard untuk admin dan staff.
          */
-        Route::view(
-            '/dashboard',
-            'admin.dashboard.index'
-        )->name('dashboard');
+
+        Route::get(
+            '/profile',
+            [ProfileAdminController::class, 'index']
+        )->name('management.profile');
+
+        Route::patch(
+            '/profile/update',
+            [ProfileAdminController::class, 'updateProfile']
+        )->name('management.profile.update');
+
+        Route::patch(
+            '/profile/avatar',
+            [ProfileAdminController::class, 'updateAvatar']
+        )->name('management.profile.avatar');
+
+        Route::patch(
+            '/profile/password',
+            [ProfileAdminController::class, 'updatePassword']
+        )->name('management.profile.password');
 
         Route::post(
             '/logout',
             [LoginStaffController::class, 'destroy']
         )->name('management.logout');
+
+        Route::view(
+            '/dashboard',
+            'admin.dashboard.index'
+        )->name('dashboard');
 
         Route::get(
             '/restaurant/orders',
