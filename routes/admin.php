@@ -4,12 +4,13 @@ use App\Http\Controllers\Admin\Auth\ForgotPasswordStaffController;
 use App\Http\Controllers\Admin\Auth\LoginStaffController;
 use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\CustomerController;
+use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\MenuItemController;
 use App\Http\Controllers\Admin\MenuPackageController;
-use App\Http\Controllers\Admin\PaymentController;
 use App\Http\Controllers\Admin\PaymentWebhookController;
 use App\Http\Controllers\Admin\ProfileAdminController;
 use App\Http\Controllers\Admin\RestaurantOrderController;
+use App\Http\Controllers\Admin\RestaurantPaymentController;
 use App\Http\Controllers\Admin\RestaurantReservationController;
 use App\Http\Controllers\Admin\RestaurantSettingController;
 use App\Http\Controllers\Admin\RestaurantTableController;
@@ -20,9 +21,18 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 | MANAGEMENT GUEST
 |--------------------------------------------------------------------------
+|
+| Route ini hanya dapat diakses oleh admin atau staff yang belum login.
+|
 */
 
 Route::middleware('guest.staff')->group(function () {
+    /*
+    |--------------------------------------------------------------------------
+    | LOGIN MANAGEMENT
+    |--------------------------------------------------------------------------
+    */
+
     Route::get(
         '/management/login',
         [LoginStaffController::class, 'index']
@@ -33,6 +43,12 @@ Route::middleware('guest.staff')->group(function () {
         [LoginStaffController::class, 'store']
     )->name('login.staff.store');
 
+    /*
+    |--------------------------------------------------------------------------
+    | FORGOT PASSWORD
+    |--------------------------------------------------------------------------
+    */
+
     Route::get(
         '/management/forgot-password',
         [ForgotPasswordStaffController::class, 'index']
@@ -42,6 +58,12 @@ Route::middleware('guest.staff')->group(function () {
         '/management/forgot-password',
         [ForgotPasswordStaffController::class, 'sendOtp']
     )->name('staff.password.otp.send');
+
+    /*
+    |--------------------------------------------------------------------------
+    | VERIFY OTP
+    |--------------------------------------------------------------------------
+    */
 
     Route::get(
         '/management/verify-otp',
@@ -58,6 +80,12 @@ Route::middleware('guest.staff')->group(function () {
         [ForgotPasswordStaffController::class, 'resendOtp']
     )->name('staff.password.otp.resend');
 
+    /*
+    |--------------------------------------------------------------------------
+    | RESET PASSWORD
+    |--------------------------------------------------------------------------
+    */
+
     Route::get(
         '/management/reset-password',
         [ForgotPasswordStaffController::class, 'showResetPassword']
@@ -73,6 +101,11 @@ Route::middleware('guest.staff')->group(function () {
 |--------------------------------------------------------------------------
 | ADMIN OR STAFF
 |--------------------------------------------------------------------------
+|
+| Seluruh route di dalam group ini dapat diakses oleh admin dan staff
+| yang sudah login, kecuali pengelolaan akun staff. Pemeriksaan role admin
+| dilakukan kembali di StaffAccountController.
+|
 */
 
 Route::prefix('management')
@@ -84,9 +117,9 @@ Route::prefix('management')
         |--------------------------------------------------------------------------
         */
 
-        Route::view(
+        Route::get(
             '/dashboard',
-            'admin.dashboard.index'
+            [DashboardController::class, 'index']
         )->name('dashboard');
 
         /*
@@ -114,6 +147,12 @@ Route::prefix('management')
             '/profile/password',
             [ProfileAdminController::class, 'updatePassword']
         )->name('management.profile.password');
+
+        /*
+        |--------------------------------------------------------------------------
+        | LOGOUT
+        |--------------------------------------------------------------------------
+        */
 
         Route::post(
             '/logout',
@@ -289,8 +328,7 @@ Route::prefix('management')
         | RESTAURANT ORDER
         |--------------------------------------------------------------------------
         |
-        | Route create harus berada sebelum route /{order} agar kata "create"
-        | tidak dianggap sebagai parameter order.
+        | Route create dan edit diletakkan sebelum route show.
         |
         */
 
@@ -343,6 +381,10 @@ Route::prefix('management')
         |--------------------------------------------------------------------------
         | RESTAURANT RESERVATION
         |--------------------------------------------------------------------------
+        |
+        | PUT digunakan oleh halaman edit.
+        | PATCH digunakan untuk pembaruan cepat dari daftar/detail reservasi.
+        |
         */
 
         Route::get(
@@ -365,11 +407,15 @@ Route::prefix('management')
             [RestaurantReservationController::class, 'edit']
         )->name('management.reservations.edit');
 
-        Route::match(
-            ['put', 'patch'],
+        Route::put(
             '/restaurant/reservations/{reservation}',
             [RestaurantReservationController::class, 'update']
         )->name('management.reservations.update');
+
+        Route::patch(
+            '/restaurant/reservations/{reservation}',
+            [RestaurantReservationController::class, 'update']
+        )->name('management.reservations.quick-update');
 
         Route::get(
             '/restaurant/reservations/{reservation}',
@@ -383,18 +429,22 @@ Route::prefix('management')
 
         /*
         |--------------------------------------------------------------------------
-        | PAYMENT
+        | RESTAURANT PAYMENT
         |--------------------------------------------------------------------------
+        |
+        | Pembayaran dibuat melalui RestaurantOrderController::pay.
+        | RestaurantPaymentController digunakan untuk daftar dan detail.
+        |
         */
 
         Route::get(
             '/restaurant/payments',
-            [PaymentController::class, 'index']
+            [RestaurantPaymentController::class, 'index']
         )->name('management.payments.index');
 
         Route::get(
             '/restaurant/payments/{payment}',
-            [PaymentController::class, 'show']
+            [RestaurantPaymentController::class, 'show']
         )->name('management.payments.show');
 
         /*
@@ -417,6 +467,10 @@ Route::prefix('management')
         |--------------------------------------------------------------------------
         | RESTAURANT SETTINGS
         |--------------------------------------------------------------------------
+        |
+        | Pengaturan restoran merupakan singleton sehingga hanya memiliki
+        | halaman edit dan proses update.
+        |
         */
 
         Route::get(
@@ -424,7 +478,7 @@ Route::prefix('management')
             [RestaurantSettingController::class, 'edit']
         )->name('management.restaurant-settings.edit');
 
-        Route::patch(
+        Route::put(
             '/restaurant/settings',
             [RestaurantSettingController::class, 'update']
         )->name('management.restaurant-settings.update');
@@ -450,8 +504,10 @@ Route::prefix('management')
         | STAFF ACCOUNT
         |--------------------------------------------------------------------------
         |
-        | Pemeriksaan role Admin tetap dilakukan kembali di dalam
-        | StaffAccountController.
+        | Route berada dalam middleware login admin/staff, tetapi setiap
+        | function StaffAccountController wajib memeriksa bahwa user yang
+        | login memiliki role admin. Dengan demikian staff tetap tidak dapat
+        | mengakses URL ini secara langsung.
         |
         */
 
@@ -479,6 +535,11 @@ Route::prefix('management')
             '/staff-accounts/{user}',
             [StaffAccountController::class, 'update']
         )->name('management.staff-accounts.update');
+
+        Route::get(
+            '/staff-accounts/{user}',
+            [StaffAccountController::class, 'show']
+        )->name('management.staff-accounts.show');
 
         Route::delete(
             '/staff-accounts/{user}',

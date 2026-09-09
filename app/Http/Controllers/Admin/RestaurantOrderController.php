@@ -7,10 +7,10 @@ use App\Models\MenuItem;
 use App\Models\MenuPackage;
 use App\Models\Order;
 use App\Models\OrderItem;
-use App\Models\OrderItemComponent;
 use App\Models\Payment;
 use App\Models\RestaurantSetting;
 use App\Models\RestaurantTable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,9 +21,6 @@ use Illuminate\View\View;
 
 class RestaurantOrderController extends Controller
 {
-    /**
-     * Menampilkan daftar pesanan.
-     */
     public function index(Request $request): View
     {
         $search = trim((string) $request->query('search'));
@@ -34,77 +31,43 @@ class RestaurantOrderController extends Controller
 
         $orders = Order::query()
             ->with([
-                'restaurantTable:id,table_number',
+                'restaurantTable:id,table_number,name,area',
                 'user:id,name',
                 'createdBy:id,name',
             ])
             ->when(
                 $search !== '',
-                fn($query) => $query->where(
-                    function ($query) use ($search) {
+                function (Builder $query) use ($search): void {
+                    $query->where(function (Builder $query) use ($search): void {
                         $query
-                            ->where(
-                                'order_number',
-                                'like',
-                                "%{$search}%"
-                            )
-                            ->orWhere(
-                                'customer_name',
-                                'like',
-                                "%{$search}%"
-                            )
-                            ->orWhere(
-                                'customer_phone',
-                                'like',
-                                "%{$search}%"
-                            )
-                            ->orWhere(
-                                'room_number',
-                                'like',
-                                "%{$search}%"
-                            );
-                    }
-                )
+                            ->where('order_number', 'like', "%{$search}%")
+                            ->orWhere('customer_name', 'like', "%{$search}%")
+                            ->orWhere('customer_phone', 'like', "%{$search}%")
+                            ->orWhere('room_number', 'like', "%{$search}%");
+                    });
+                }
             )
             ->when(
                 in_array($status, $this->statuses(), true),
-                fn($query) => $query->where('status', $status)
+                fn(Builder $query): Builder => $query->where('status', $status)
             )
             ->when(
-                in_array(
-                    $paymentStatus,
-                    [
-                        'unpaid',
-                        'pending',
-                        'paid',
-                        'failed',
-                        'refunded',
-                    ],
-                    true
-                ),
-                fn($query) => $query->where(
+                in_array($paymentStatus, $this->paymentStatuses(), true),
+                fn(Builder $query): Builder => $query->where(
                     'payment_status',
                     $paymentStatus
                 )
             )
             ->when(
-                in_array(
-                    $orderType,
-                    [
-                        'dine_in',
-                        'delivery',
-                        'room_service',
-                    ],
-                    true
-                ),
-                fn($query) => $query->where(
+                in_array($orderType, $this->orderTypes(), true),
+                fn(Builder $query): Builder => $query->where(
                     'order_type',
                     $orderType
                 )
             )
             ->when(
                 $date,
-                fn($query) => $query->whereDate(
+                fn(Builder $query): Builder => $query->whereDate(
                     'ordered_at',
                     $date
                 )
@@ -129,137 +92,75 @@ class RestaurantOrderController extends Controller
         );
     }
 
-    /**
-     * Menampilkan form pesanan kasir.
-     */
     public function create(): View
     {
         return view(
             'admin.restaurant.orders.create',
-            $this->orderFormData()
+            $this->formData()
         );
     }
 
-    /**
-     * Menyimpan pesanan baru dari Admin atau Staff.
-     */
     public function store(Request $request): RedirectResponse
     {
         $validated = $this->validateOrder($request);
+        $this->validateDestination($validated);
+        $this->validatePaymentTiming($validated);
 
-        $settings = RestaurantSetting::current();
+        $order = DB::transaction(function () use ($validated): Order {
+            $calculation = $this->calculateOrder(
+                $validated['items'],
+                (float) ($validated['discount_amount'] ?? 0)
+            );
 
-        $this->validateOrderDestination(
-            $validated,
-            $settings
-        );
+            $order = Order::query()->create([
+                'access_token' => (string) Str::uuid(),
+                'order_number' => $this->generateOrderNumber(),
+                'user_id' => null,
+                'created_by' => auth()->id(),
+                'restaurant_table_id' => $validated['order_type'] === 'dine_in'
+                    ? $validated['restaurant_table_id']
+                    : null,
+                'ordered_from_table_qr' => false,
+                'order_type' => $validated['order_type'],
+                'customer_name' => $validated['customer_name'],
+                'customer_phone' => $validated['customer_phone'],
+                'customer_email' => $validated['customer_email'] ?? null,
+                'room_number' => $validated['order_type'] === 'room_service'
+                    ? $validated['room_number']
+                    : null,
+                'delivery_address' => $validated['order_type'] === 'delivery'
+                    ? $validated['delivery_address']
+                    : null,
+                'guest_count' => $validated['guest_count'],
+                'status' => 'pending',
+                'payment_status' => 'unpaid',
+                'payment_timing' => $validated['payment_timing'],
+                'subtotal' => $calculation['subtotal'],
+                'discount_amount' => $calculation['discount_amount'],
+                'service_charge_percentage' => 0,
+                'service_charge_amount' => 0,
+                'tax_percentage' => $calculation['tax_percentage'],
+                'tax_amount' => $calculation['tax_amount'],
+                'grand_total' => $calculation['grand_total'],
+                'customer_note' => $validated['customer_note'] ?? null,
+                'internal_note' => $validated['internal_note'] ?? null,
+                'ordered_at' => now(),
+                'scheduled_at' => $validated['scheduled_at'] ?? null,
+            ]);
 
-        $order = DB::transaction(
-            function () use ($validated, $settings) {
-                $calculated = $this->calculateOrder(
-                    $validated['items'],
-                    (float) $validated['discount_amount'],
-                    $settings
-                );
+            $this->saveOrderItems(
+                $order,
+                $calculation['items']
+            );
 
-                $order = Order::create([
-                    'access_token' => (string) Str::uuid(),
-
-                    'order_number' => $this->generateOrderNumber(
-                        $settings
-                    ),
-
-                    'user_id' => null,
-
-                    'created_by' => auth()->id(),
-
-                    'restaurant_table_id' =>
-                    $validated['order_type'] === 'dine_in'
-                        ? $validated['restaurant_table_id']
-                        : null,
-
-                    'ordered_from_table_qr' => false,
-
-                    'order_type' => $validated['order_type'],
-
-                    'customer_name' => $validated['customer_name'],
-
-                    'customer_phone' => $validated['customer_phone'],
-
-                    'customer_email' =>
-                    $validated['customer_email'] ?? null,
-
-                    'room_number' =>
-                    $validated['order_type'] === 'room_service'
-                        ? $validated['room_number']
-                        : null,
-
-                    'delivery_address' =>
-                    $validated['order_type'] === 'delivery'
-                        ? $validated['delivery_address']
-                        : null,
-
-                    'guest_count' => $validated['guest_count'],
-
-                    'status' => 'pending',
-
-                    'payment_status' => 'unpaid',
-
-                    'payment_timing' =>
-                    $validated['payment_timing'],
-
-                    'subtotal' => $calculated['subtotal'],
-
-                    'discount_amount' =>
-                    $calculated['discount_amount'],
-
-                    'service_charge_percentage' =>
-                    $calculated['service_charge_percentage'],
-
-                    'service_charge_amount' =>
-                    $calculated['service_charge_amount'],
-
-                    'tax_percentage' =>
-                    $calculated['tax_percentage'],
-
-                    'tax_amount' =>
-                    $calculated['tax_amount'],
-
-                    'grand_total' =>
-                    $calculated['grand_total'],
-
-                    'customer_note' =>
-                    $validated['customer_note'] ?? null,
-
-                    'internal_note' =>
-                    $validated['internal_note'] ?? null,
-
-                    'ordered_at' => now(),
-
-                    'scheduled_at' =>
-                    $validated['scheduled_at'] ?? null,
-                ]);
-
-                $this->saveOrderItems(
-                    $order,
-                    $calculated['items']
-                );
-
-                return $order;
-            }
-        );
+            return $order;
+        });
 
         return redirect()
             ->route('management.orders.show', $order)
-            ->with(
-                'success',
-                'Pesanan kasir berhasil dibuat.'
-            );
+            ->with('success', 'Pesanan berhasil dibuat.');
     }
 
-    /**
-     * Menampilkan detail pesanan.
-     */
     public function show(Order $order): View
     {
         $order->load([
@@ -285,51 +186,27 @@ class RestaurantOrderController extends Controller
         );
     }
 
-    /**
-     * Menampilkan form edit pesanan.
-     */
     public function edit(Order $order): View|RedirectResponse
     {
-        if ($order->payment_status === 'paid') {
+        if (!$this->canEdit($order)) {
             return redirect()
                 ->route('management.orders.show', $order)
                 ->with(
                     'error',
-                    'Pesanan yang sudah lunas tidak dapat diubah.'
+                    'Pesanan yang lunas, selesai, atau dibatalkan tidak dapat diedit.'
                 );
         }
 
-        if (
-            in_array(
-                $order->status,
-                ['completed', 'cancelled'],
-                true
-            )
-        ) {
-            return redirect()
-                ->route('management.orders.show', $order)
-                ->with(
-                    'error',
-                    'Pesanan yang selesai atau dibatalkan tidak dapat diubah.'
-                );
-        }
-
-        $order->load([
-            'items',
-        ]);
+        $order->load('items');
 
         $formItems = $order->items
-            ->map(function (OrderItem $item) {
+            ->map(function (OrderItem $item): array {
                 return [
                     'item_type' => $item->item_type,
-
-                    'item_id' =>
-                    $item->item_type === 'package'
+                    'item_id' => $item->item_type === 'package'
                         ? $item->menu_package_id
                         : $item->menu_item_id,
-
                     'quantity' => $item->quantity,
-
                     'note' => $item->note,
                 ];
             })
@@ -339,147 +216,86 @@ class RestaurantOrderController extends Controller
         return view(
             'admin.restaurant.orders.edit',
             array_merge(
-                $this->orderFormData(),
-                [
-                    'order' => $order,
-                    'formItems' => $formItems,
-                ]
+                $this->formData(),
+                compact('order', 'formItems')
             )
         );
     }
 
-    /**
-     * Memperbarui pesanan beserta item.
-     */
     public function update(
         Request $request,
         Order $order
     ): RedirectResponse {
-        if ($order->payment_status === 'paid') {
-            return back()->with(
-                'error',
-                'Pesanan yang sudah lunas tidak dapat diubah.'
-            );
-        }
-
-        if (
-            in_array(
-                $order->status,
-                ['completed', 'cancelled'],
-                true
-            )
-        ) {
-            return back()->with(
-                'error',
-                'Pesanan yang selesai atau dibatalkan tidak dapat diubah.'
-            );
+        if (!$this->canEdit($order)) {
+            return redirect()
+                ->route('management.orders.show', $order)
+                ->with(
+                    'error',
+                    'Pesanan yang lunas, selesai, atau dibatalkan tidak dapat diedit.'
+                );
         }
 
         $validated = $this->validateOrder($request);
+        $this->validateDestination($validated);
+        $this->validatePaymentTiming($validated);
 
-        $settings = RestaurantSetting::current();
+        DB::transaction(function () use ($validated, $order): void {
+            $lockedOrder = Order::query()
+                ->lockForUpdate()
+                ->findOrFail($order->id);
 
-        $this->validateOrderDestination(
-            $validated,
-            $settings
-        );
-
-        DB::transaction(
-            function () use (
-                $validated,
-                $settings,
-                $order
-            ) {
-                $calculated = $this->calculateOrder(
-                    $validated['items'],
-                    (float) $validated['discount_amount'],
-                    $settings
-                );
-
-                $order->update([
-                    'restaurant_table_id' =>
-                    $validated['order_type'] === 'dine_in'
-                        ? $validated['restaurant_table_id']
-                        : null,
-
-                    'ordered_from_table_qr' => false,
-
-                    'order_type' => $validated['order_type'],
-
-                    'customer_name' => $validated['customer_name'],
-
-                    'customer_phone' => $validated['customer_phone'],
-
-                    'customer_email' =>
-                    $validated['customer_email'] ?? null,
-
-                    'room_number' =>
-                    $validated['order_type'] === 'room_service'
-                        ? $validated['room_number']
-                        : null,
-
-                    'delivery_address' =>
-                    $validated['order_type'] === 'delivery'
-                        ? $validated['delivery_address']
-                        : null,
-
-                    'guest_count' => $validated['guest_count'],
-
-                    'payment_timing' =>
-                    $validated['payment_timing'],
-
-                    'subtotal' => $calculated['subtotal'],
-
-                    'discount_amount' =>
-                    $calculated['discount_amount'],
-
-                    'service_charge_percentage' =>
-                    $calculated['service_charge_percentage'],
-
-                    'service_charge_amount' =>
-                    $calculated['service_charge_amount'],
-
-                    'tax_percentage' =>
-                    $calculated['tax_percentage'],
-
-                    'tax_amount' =>
-                    $calculated['tax_amount'],
-
-                    'grand_total' =>
-                    $calculated['grand_total'],
-
-                    'customer_note' =>
-                    $validated['customer_note'] ?? null,
-
-                    'internal_note' =>
-                    $validated['internal_note'] ?? null,
-
-                    'scheduled_at' =>
-                    $validated['scheduled_at'] ?? null,
+            if (!$this->canEdit($lockedOrder)) {
+                throw ValidationException::withMessages([
+                    'order' => 'Status pesanan berubah dan tidak dapat diedit.',
                 ]);
-
-                OrderItem::query()
-                    ->where('order_id', $order->id)
-                    ->delete();
-
-                $this->saveOrderItems(
-                    $order,
-                    $calculated['items']
-                );
             }
-        );
+
+            $calculation = $this->calculateOrder(
+                $validated['items'],
+                (float) ($validated['discount_amount'] ?? 0)
+            );
+
+            $lockedOrder->update([
+                'restaurant_table_id' => $validated['order_type'] === 'dine_in'
+                    ? $validated['restaurant_table_id']
+                    : null,
+                'order_type' => $validated['order_type'],
+                'customer_name' => $validated['customer_name'],
+                'customer_phone' => $validated['customer_phone'],
+                'customer_email' => $validated['customer_email'] ?? null,
+                'room_number' => $validated['order_type'] === 'room_service'
+                    ? $validated['room_number']
+                    : null,
+                'delivery_address' => $validated['order_type'] === 'delivery'
+                    ? $validated['delivery_address']
+                    : null,
+                'guest_count' => $validated['guest_count'],
+                'payment_timing' => $validated['payment_timing'],
+                'subtotal' => $calculation['subtotal'],
+                'discount_amount' => $calculation['discount_amount'],
+                'service_charge_percentage' => 0,
+                'service_charge_amount' => 0,
+                'tax_percentage' => $calculation['tax_percentage'],
+                'tax_amount' => $calculation['tax_amount'],
+                'grand_total' => $calculation['grand_total'],
+                'customer_note' => $validated['customer_note'] ?? null,
+                'internal_note' => $validated['internal_note'] ?? null,
+                'scheduled_at' => $validated['scheduled_at'] ?? null,
+            ]);
+
+            $lockedOrder->items()->delete();
+
+            $this->saveOrderItems(
+                $lockedOrder,
+                $calculation['items']
+            );
+        });
 
         return redirect()
             ->route('management.orders.show', $order)
-            ->with(
-                'success',
-                'Pesanan berhasil diperbarui.'
-            );
+            ->with('success', 'Pesanan berhasil diperbarui.');
     }
 
-    /**
-     * Memperbarui status pesanan.
-     */
     public function updateStatus(
         Request $request,
         Order $order
@@ -489,13 +305,11 @@ class RestaurantOrderController extends Controller
                 'required',
                 Rule::in($this->statuses()),
             ],
-
             'internal_note' => [
                 'nullable',
                 'string',
                 'max:3000',
             ],
-
             'cancellation_reason' => [
                 'nullable',
                 'required_if:status,cancelled',
@@ -505,40 +319,37 @@ class RestaurantOrderController extends Controller
         ]);
 
         if (
-            in_array(
-                $order->status,
-                ['completed', 'cancelled'],
-                true
-            )
+            in_array($order->status, ['completed', 'cancelled'], true)
             && $validated['status'] !== $order->status
         ) {
             return back()->with(
                 'error',
-                'Order yang selesai atau dibatalkan tidak dapat dikembalikan ke status sebelumnya.'
+                'Pesanan selesai atau dibatalkan tidak dapat dikembalikan.'
             );
         }
 
-        $timestamps = [
-            'confirmed' => 'confirmed_at',
-            'completed' => 'completed_at',
-            'cancelled' => 'cancelled_at',
-        ];
-
         $data = [
             'status' => $validated['status'],
-
-            'internal_note' =>
-            $validated['internal_note']
+            'internal_note' => $validated['internal_note']
                 ?? $order->internal_note,
-
-            'cancellation_reason' =>
-            $validated['status'] === 'cancelled'
+            'cancellation_reason' => $validated['status'] === 'cancelled'
                 ? $validated['cancellation_reason']
                 : null,
         ];
 
-        if (isset($timestamps[$validated['status']])) {
-            $data[$timestamps[$validated['status']]] = now();
+        if (
+            $validated['status'] === 'confirmed'
+            && !$order->confirmed_at
+        ) {
+            $data['confirmed_at'] = now();
+        }
+
+        if ($validated['status'] === 'completed') {
+            $data['completed_at'] = now();
+        }
+
+        if ($validated['status'] === 'cancelled') {
+            $data['cancelled_at'] = now();
         }
 
         $order->update($data);
@@ -549,17 +360,15 @@ class RestaurantOrderController extends Controller
         );
     }
 
-    /**
-     * Memperbarui status satu item pesanan.
-     */
     public function updateItemStatus(
         Request $request,
         Order $order,
         OrderItem $orderItem
     ): RedirectResponse {
-        if ($orderItem->order_id !== $order->id) {
-            abort(404);
-        }
+        abort_unless(
+            (int) $orderItem->order_id === (int) $order->id,
+            404
+        );
 
         $validated = $request->validate([
             'status' => [
@@ -568,21 +377,20 @@ class RestaurantOrderController extends Controller
             ],
         ]);
 
-        DB::transaction(
-            function () use ($orderItem, $validated) {
-                $orderItem->update([
+        DB::transaction(function () use (
+            $orderItem,
+            $validated
+        ): void {
+            $orderItem->update([
+                'status' => $validated['status'],
+            ]);
+
+            if ($orderItem->item_type === 'package') {
+                $orderItem->components()->update([
                     'status' => $validated['status'],
                 ]);
-
-                if ($orderItem->item_type === 'package') {
-                    $orderItem
-                        ->components()
-                        ->update([
-                            'status' => $validated['status'],
-                        ]);
-                }
             }
-        );
+        });
 
         return back()->with(
             'success',
@@ -590,9 +398,6 @@ class RestaurantOrderController extends Controller
         );
     }
 
-    /**
-     * Menyimpan pembayaran kasir.
-     */
     public function pay(
         Request $request,
         Order $order
@@ -608,7 +413,6 @@ class RestaurantOrderController extends Controller
                     'transfer',
                 ]),
             ],
-
             'paid_amount' => [
                 'required',
                 'numeric',
@@ -616,80 +420,65 @@ class RestaurantOrderController extends Controller
             ],
         ]);
 
-        if ($order->payment_status === 'paid') {
-            return back()->with(
-                'error',
-                'Pesanan ini sudah lunas.'
-            );
-        }
+        DB::transaction(function () use (
+            $validated,
+            $order
+        ): void {
+            $lockedOrder = Order::query()
+                ->lockForUpdate()
+                ->findOrFail($order->id);
 
-        if ($order->status === 'cancelled') {
-            return back()->with(
-                'error',
-                'Pesanan yang dibatalkan tidak dapat dibayar.'
-            );
-        }
-
-        if (
-            (float) $validated['paid_amount']
-            < (float) $order->grand_total
-        ) {
-            throw ValidationException::withMessages([
-                'paid_amount' =>
-                'Nominal pembayaran kurang dari total tagihan.',
-            ]);
-        }
-
-        $settings = RestaurantSetting::current();
-
-        DB::transaction(
-            function () use (
-                $validated,
-                $order,
-                $settings
-            ) {
-                $paidAmount =
-                    (float) $validated['paid_amount'];
-
-                $amount =
-                    (float) $order->grand_total;
-
-                Payment::create([
-                    'order_id' => $order->id,
-
-                    'processed_by' => auth()->id(),
-
-                    'payment_number' =>
-                    $this->generatePaymentNumber(
-                        $settings
-                    ),
-
-                    'payment_channel' => 'cashier',
-
-                    'payment_method' =>
-                    $validated['payment_method'],
-
-                    'provider' => 'manual',
-
-                    'amount' => $amount,
-
-                    'paid_amount' => $paidAmount,
-
-                    'change_amount' => max(
-                        0,
-                        $paidAmount - $amount
-                    ),
-
-                    'status' => 'paid',
-
-                    'paid_at' => now(),
-                ]);
-
-                $order->update([
-                    'payment_status' => 'paid',
+            if ($lockedOrder->payment_status === 'paid') {
+                throw ValidationException::withMessages([
+                    'payment' => 'Pesanan ini sudah lunas.',
                 ]);
             }
-        );
+
+            if ($lockedOrder->status === 'cancelled') {
+                throw ValidationException::withMessages([
+                    'payment' => 'Pesanan yang dibatalkan tidak dapat dibayar.',
+                ]);
+            }
+
+            $grandTotal = (float) $lockedOrder->grand_total;
+            $paidAmount = (float) $validated['paid_amount'];
+
+            if ($paidAmount < $grandTotal) {
+                throw ValidationException::withMessages([
+                    'paid_amount' => 'Nominal pembayaran kurang dari total tagihan.',
+                ]);
+            }
+
+            Payment::query()->create([
+                'order_id' => $lockedOrder->id,
+                'processed_by' => auth()->id(),
+                'payment_number' => $this->generatePaymentNumber(),
+                'payment_channel' => 'cashier',
+                'payment_method' => $validated['payment_method'],
+                'provider' => 'manual',
+                'provider_transaction_id' => null,
+                'amount' => $grandTotal,
+                'paid_amount' => $paidAmount,
+                'change_amount' => max(
+                    0,
+                    $paidAmount - $grandTotal
+                ),
+                'status' => 'paid',
+                'fraud_status' => null,
+                'payment_url' => null,
+                'snap_token' => null,
+                'provider_response' => null,
+                'note' => 'Pembayaran dicatat melalui kasir.',
+                'expired_at' => null,
+                'paid_at' => now(),
+                'failed_at' => null,
+                'refunded_at' => null,
+            ]);
+
+            $lockedOrder->update([
+                'payment_status' => 'paid',
+            ]);
+        });
 
         return back()->with(
             'success',
@@ -697,9 +486,6 @@ class RestaurantOrderController extends Controller
         );
     }
 
-    /**
-     * Validasi form pesanan.
-     */
     private function validateOrder(Request $request): array
     {
         return $request->validate([
@@ -708,555 +494,338 @@ class RestaurantOrderController extends Controller
                 'string',
                 'max:150',
             ],
-
             'customer_phone' => [
                 'required',
                 'string',
                 'max:30',
             ],
-
             'customer_email' => [
                 'nullable',
                 'email',
                 'max:255',
             ],
-
             'order_type' => [
                 'required',
-                Rule::in([
-                    'dine_in',
-                    'delivery',
-                    'room_service',
-                ]),
+                Rule::in($this->orderTypes()),
             ],
-
             'restaurant_table_id' => [
                 'nullable',
                 'integer',
                 'exists:restaurant_tables,id',
             ],
-
             'room_number' => [
                 'nullable',
                 'string',
                 'max:30',
             ],
-
             'delivery_address' => [
                 'nullable',
                 'string',
-                'max:3000',
+                'max:2000',
             ],
-
             'guest_count' => [
                 'required',
                 'integer',
                 'min:1',
                 'max:100',
             ],
-
             'payment_timing' => [
                 'required',
-                Rule::in([
-                    'pay_now',
-                    'pay_later',
-                ]),
+                Rule::in(['pay_now', 'pay_later']),
             ],
-
             'discount_amount' => [
-                'required',
+                'nullable',
                 'numeric',
                 'min:0',
             ],
-
             'customer_note' => [
                 'nullable',
                 'string',
                 'max:3000',
             ],
-
             'internal_note' => [
                 'nullable',
                 'string',
                 'max:3000',
             ],
-
             'scheduled_at' => [
                 'nullable',
                 'date',
             ],
-
             'items' => [
                 'required',
                 'array',
                 'min:1',
             ],
-
             'items.*.item_type' => [
                 'required',
-                Rule::in([
-                    'single',
-                    'package',
-                ]),
+                Rule::in(['single', 'package']),
             ],
-
             'items.*.item_id' => [
                 'required',
                 'integer',
+                'min:1',
             ],
-
             'items.*.quantity' => [
                 'required',
                 'integer',
                 'min:1',
                 'max:999',
             ],
-
             'items.*.note' => [
                 'nullable',
                 'string',
-                'max:2000',
+                'max:1000',
             ],
         ]);
     }
 
-    /**
-     * Validasi tujuan dan metode bayar nanti.
-     */
-    private function validateOrderDestination(
-        array $validated,
-        RestaurantSetting $settings
-    ): void {
+    private function validateDestination(array $validated): void
+    {
+        $errors = [];
+
         if (
             $validated['order_type'] === 'dine_in'
             && empty($validated['restaurant_table_id'])
         ) {
-            throw ValidationException::withMessages([
-                'restaurant_table_id' =>
-                'Meja wajib dipilih untuk pesanan dine-in.',
-            ]);
+            $errors['restaurant_table_id'] =
+                'Meja restoran wajib dipilih untuk dine-in.';
         }
 
         if (
             $validated['order_type'] === 'room_service'
             && empty($validated['room_number'])
         ) {
-            throw ValidationException::withMessages([
-                'room_number' =>
-                'Nomor kamar wajib diisi untuk room service.',
-            ]);
+            $errors['room_number'] =
+                'Nomor kamar wajib diisi untuk room service.';
         }
 
         if (
             $validated['order_type'] === 'delivery'
             && empty($validated['delivery_address'])
         ) {
-            throw ValidationException::withMessages([
-                'delivery_address' =>
-                'Alamat pengiriman wajib diisi untuk delivery.',
-            ]);
+            $errors['delivery_address'] =
+                'Alamat pengantaran wajib diisi untuk delivery.';
         }
 
-        if (
-            $validated['payment_timing'] === 'pay_later'
-            && ! $settings->allowsPayLater(
-                $validated['order_type']
-            )
-        ) {
-            throw ValidationException::withMessages([
-                'payment_timing' =>
-                'Bayar nanti tidak diizinkan untuk jenis pesanan ini.',
-            ]);
-        }
-
-        if (
-            $validated['order_type'] === 'dine_in'
-            && ! empty($validated['restaurant_table_id'])
-        ) {
-            $table = RestaurantTable::query()
-                ->whereKey(
-                    $validated['restaurant_table_id']
-                )
-                ->where('is_active', true)
-                ->first();
-
-            if (! $table) {
-                throw ValidationException::withMessages([
-                    'restaurant_table_id' =>
-                    'Meja tidak tersedia atau sudah dinonaktifkan.',
-                ]);
-            }
-
-            if (
-                (int) $validated['guest_count']
-                > (int) $table->capacity
-            ) {
-                throw ValidationException::withMessages([
-                    'guest_count' =>
-                    "Jumlah tamu melebihi kapasitas meja {$table->capacity} orang.",
-                ]);
-            }
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
         }
     }
 
-    /**
-     * Mengambil dan menghitung seluruh item.
-     */
+    private function validatePaymentTiming(array $validated): void
+    {
+        if (
+            $validated['order_type'] === 'delivery'
+            && $validated['payment_timing'] === 'pay_later'
+        ) {
+            throw ValidationException::withMessages([
+                'payment_timing' =>
+                'Pesanan delivery harus menggunakan pembayaran sekarang.',
+            ]);
+        }
+    }
+
     private function calculateOrder(
         array $requestedItems,
-        float $discountAmount,
-        RestaurantSetting $settings
+        float $discountAmount
     ): array {
-        $calculatedItems = [];
+        $menuItemIds = collect($requestedItems)
+            ->where('item_type', 'single')
+            ->pluck('item_id')
+            ->unique()
+            ->values();
+
+        $packageIds = collect($requestedItems)
+            ->where('item_type', 'package')
+            ->pluck('item_id')
+            ->unique()
+            ->values();
+
+        $menuItems = MenuItem::query()
+            ->whereIn('id', $menuItemIds)
+            ->where('is_available', true)
+            ->get()
+            ->keyBy('id');
+
+        $packages = MenuPackage::query()
+            ->with('items')
+            ->whereIn('id', $packageIds)
+            ->where('is_available', true)
+            ->get()
+            ->keyBy('id');
+
+        $items = [];
         $subtotal = 0;
 
-        foreach ($requestedItems as $index => $requestedItem) {
-            $itemType = $requestedItem['item_type'];
+        foreach ($requestedItems as $requestedItem) {
+            $type = $requestedItem['item_type'];
             $itemId = (int) $requestedItem['item_id'];
             $quantity = (int) $requestedItem['quantity'];
 
-            if ($itemType === 'single') {
-                $menuItem = MenuItem::query()
-                    ->whereKey($itemId)
-                    ->where('is_available', true)
-                    ->first();
+            if ($type === 'single') {
+                $menuItem = $menuItems->get($itemId);
 
-                if (! $menuItem) {
+                if (!$menuItem) {
                     throw ValidationException::withMessages([
-                        "items.{$index}.item_id" =>
-                        'Menu tidak ditemukan atau sedang tidak tersedia.',
+                        'items' =>
+                        "Menu dengan ID {$itemId} tidak tersedia.",
                     ]);
                 }
 
                 $unitPrice = (float) $menuItem->price;
-                $itemSubtotal = round(
-                    $unitPrice * $quantity,
-                    2
-                );
+                $lineSubtotal = $unitPrice * $quantity;
 
-                $calculatedItems[] = [
+                $items[] = [
                     'item_type' => 'single',
                     'menu_item_id' => $menuItem->id,
                     'menu_package_id' => null,
                     'item_name' => $menuItem->name,
                     'unit_price' => $unitPrice,
                     'quantity' => $quantity,
-                    'subtotal' => $itemSubtotal,
+                    'subtotal' => $lineSubtotal,
                     'note' => $requestedItem['note'] ?? null,
                     'components' => [],
                 ];
 
-                $subtotal += $itemSubtotal;
+                $subtotal += $lineSubtotal;
 
                 continue;
             }
 
-            $menuPackage = MenuPackage::query()
-                ->with('items')
-                ->whereKey($itemId)
-                ->where('is_available', true)
-                ->where(
-                    function ($query) {
-                        $query
-                            ->whereNull('available_from')
-                            ->orWhere(
-                                'available_from',
-                                '<=',
-                                now()
-                            );
-                    }
-                )
-                ->where(
-                    function ($query) {
-                        $query
-                            ->whereNull('available_until')
-                            ->orWhere(
-                                'available_until',
-                                '>=',
-                                now()
-                            );
-                    }
-                )
-                ->first();
+            $package = $packages->get($itemId);
 
-            if (! $menuPackage) {
+            if (!$package) {
                 throw ValidationException::withMessages([
-                    "items.{$index}.item_id" =>
-                    'Paket tidak ditemukan atau sedang tidak tersedia.',
+                    'items' =>
+                    "Paket dengan ID {$itemId} tidak tersedia.",
                 ]);
             }
 
-            if ($quantity < $menuPackage->minimum_order) {
+            if ($quantity < (int) $package->minimum_order) {
                 throw ValidationException::withMessages([
-                    "items.{$index}.quantity" =>
-                    "Minimum pemesanan paket ini adalah {$menuPackage->minimum_order}.",
+                    'items' =>
+                    "Minimal pemesanan paket {$package->name} adalah {$package->minimum_order}.",
                 ]);
             }
 
-            if ($menuPackage->items->isEmpty()) {
-                throw ValidationException::withMessages([
-                    "items.{$index}.item_id" =>
-                    'Paket belum memiliki komponen menu.',
-                ]);
-            }
+            $unitPrice = (float) $package->package_price;
+            $lineSubtotal = $unitPrice * $quantity;
 
-            $unitPrice =
-                (float) $menuPackage->package_price;
-
-            $itemSubtotal = round(
-                $unitPrice * $quantity,
-                2
-            );
-
-            $components = $menuPackage->items
-                ->map(function (
-                    MenuItem $component
-                ) use ($quantity) {
-                    $quantityPerPackage =
-                        (int) $component->pivot->quantity;
+            $components = $package->items
+                ->map(function (MenuItem $menuItem) use ($quantity): array {
+                    $quantityPerPackage = (int) $menuItem->pivot->quantity;
 
                     return [
-                        'menu_item_id' => $component->id,
-
-                        'menu_name' => $component->name,
-
-                        'quantity_per_package' =>
-                        $quantityPerPackage,
-
-                        'total_quantity' =>
-                        $quantityPerPackage * $quantity,
-
-                        'note' =>
-                        $component->pivot->note ?? null,
+                        'menu_item_id' => $menuItem->id,
+                        'menu_name' => $menuItem->name,
+                        'quantity_per_package' => $quantityPerPackage,
+                        'total_quantity' => $quantityPerPackage * $quantity,
+                        'note' => $menuItem->pivot->note,
+                        'status' => 'pending',
                     ];
                 })
                 ->values()
                 ->all();
 
-            $calculatedItems[] = [
+            $items[] = [
                 'item_type' => 'package',
                 'menu_item_id' => null,
-                'menu_package_id' => $menuPackage->id,
-                'item_name' => $menuPackage->name,
+                'menu_package_id' => $package->id,
+                'item_name' => $package->name,
                 'unit_price' => $unitPrice,
                 'quantity' => $quantity,
-                'subtotal' => $itemSubtotal,
+                'subtotal' => $lineSubtotal,
                 'note' => $requestedItem['note'] ?? null,
                 'components' => $components,
             ];
 
-            $subtotal += $itemSubtotal;
+            $subtotal += $lineSubtotal;
         }
-
-        $subtotal = round($subtotal, 2);
 
         if ($discountAmount > $subtotal) {
             throw ValidationException::withMessages([
                 'discount_amount' =>
-                'Diskon tidak boleh melebihi subtotal.',
+                'Diskon tidak boleh melebihi subtotal pesanan.',
             ]);
         }
 
-        $maximumDiscount = round(
-            $subtotal
-                * (
-                    (float) $settings
-                        ->maximum_discount_percentage
-                    / 100
-                ),
-            2
-        );
+        $settings = RestaurantSetting::current();
 
-        if ($discountAmount > $maximumDiscount) {
-            throw ValidationException::withMessages([
-                'discount_amount' =>
-                'Diskon melebihi batas maksimal '
-                    . $settings->maximum_discount_percentage
-                    . '%.',
-            ]);
-        }
+        $taxPercentage = $settings->is_tax_active
+            ? (float) $settings->tax_percentage
+            : 0;
 
-        $discountAmount = round(
-            $discountAmount,
-            2
-        );
-
-        $afterDiscount = max(
-            0,
-            $subtotal - $discountAmount
-        );
-
-        $serviceChargePercentage =
-            $settings->activeServiceChargePercentage();
-
-        $serviceChargeAmount = round(
-            $afterDiscount
-                * ($serviceChargePercentage / 100),
-            2
-        );
-
-        $taxPercentage =
-            $settings->activeTaxPercentage();
-
-        $taxBase =
-            $afterDiscount + $serviceChargeAmount;
-
-        $taxAmount = round(
-            $taxBase * ($taxPercentage / 100),
-            2
-        );
-
-        $grandTotal = round(
-            $afterDiscount
-                + $serviceChargeAmount
-                + $taxAmount,
-            2
-        );
+        $taxBase = max(0, $subtotal - $discountAmount);
+        $taxAmount = $taxBase * ($taxPercentage / 100);
+        $grandTotal = $taxBase + $taxAmount;
 
         return [
-            'items' => $calculatedItems,
-            'subtotal' => $subtotal,
-            'discount_amount' => $discountAmount,
-            'service_charge_percentage' =>
-            $serviceChargePercentage,
-            'service_charge_amount' =>
-            $serviceChargeAmount,
-            'tax_percentage' => $taxPercentage,
-            'tax_amount' => $taxAmount,
-            'grand_total' => $grandTotal,
+            'items' => $items,
+            'subtotal' => round($subtotal, 2),
+            'discount_amount' => round($discountAmount, 2),
+            'tax_percentage' => round($taxPercentage, 2),
+            'tax_amount' => round($taxAmount, 2),
+            'grand_total' => round($grandTotal, 2),
         ];
     }
 
-    /**
-     * Menyimpan snapshot item dan komponen paket.
-     */
     private function saveOrderItems(
         Order $order,
-        array $calculatedItems
+        array $items
     ): void {
-        foreach ($calculatedItems as $calculatedItem) {
-            $orderItem = OrderItem::create([
-                'order_id' => $order->id,
+        foreach ($items as $itemData) {
+            $components = $itemData['components'];
+            unset($itemData['components']);
 
-                'item_type' =>
-                $calculatedItem['item_type'],
+            $orderItem = $order->items()->create(
+                array_merge(
+                    $itemData,
+                    ['status' => 'pending']
+                )
+            );
 
-                'menu_item_id' =>
-                $calculatedItem['menu_item_id'],
-
-                'menu_package_id' =>
-                $calculatedItem['menu_package_id'],
-
-                'item_name' =>
-                $calculatedItem['item_name'],
-
-                'unit_price' =>
-                $calculatedItem['unit_price'],
-
-                'quantity' =>
-                $calculatedItem['quantity'],
-
-                'subtotal' =>
-                $calculatedItem['subtotal'],
-
-                'note' =>
-                $calculatedItem['note'],
-
-                'status' => 'pending',
-            ]);
-
-            foreach (
-                $calculatedItem['components']
-                as $component
-            ) {
-                OrderItemComponent::create([
-                    'order_item_id' => $orderItem->id,
-
-                    'menu_item_id' =>
-                    $component['menu_item_id'],
-
-                    'menu_name' =>
-                    $component['menu_name'],
-
-                    'quantity_per_package' =>
-                    $component['quantity_per_package'],
-
-                    'total_quantity' =>
-                    $component['total_quantity'],
-
-                    'note' => $component['note'],
-
-                    'status' => 'pending',
-                ]);
+            if ($components !== []) {
+                $orderItem->components()->createMany($components);
             }
         }
     }
 
-    /**
-     * Data yang dibutuhkan form create dan edit.
-     */
-    private function orderFormData(): array
+    private function formData(): array
     {
-        $menuItems = MenuItem::query()
-            ->with('category:id,name,menu_type')
-            ->where('is_available', true)
-            ->orderBy('name')
-            ->get();
-
-        $menuPackages = MenuPackage::query()
-            ->with('items:id,name')
-            ->where('is_available', true)
-            ->where(
-                function ($query) {
-                    $query
-                        ->whereNull('available_from')
-                        ->orWhere(
-                            'available_from',
-                            '<=',
-                            now()
-                        );
-                }
-            )
-            ->where(
-                function ($query) {
-                    $query
-                        ->whereNull('available_until')
-                        ->orWhere(
-                            'available_until',
-                            '>=',
-                            now()
-                        );
-                }
-            )
-            ->orderBy('name')
-            ->get();
-
-        $tables = RestaurantTable::query()
-            ->where('is_active', true)
-            ->orderBy('area')
-            ->orderBy('table_number')
-            ->get();
-
-        $settings = RestaurantSetting::current();
-
-        return compact(
-            'menuItems',
-            'menuPackages',
-            'tables',
-            'settings'
-        );
+        return [
+            'menuItems' => MenuItem::query()
+                ->where('is_available', true)
+                ->orderBy('sort_order')
+                ->orderBy('name')
+                ->get(),
+            'menuPackages' => MenuPackage::query()
+                ->where('is_available', true)
+                ->orderBy('sort_order')
+                ->orderBy('name')
+                ->get(),
+            'tables' => RestaurantTable::query()
+                ->where('is_active', true)
+                ->orderBy('table_number')
+                ->get(),
+            'settings' => RestaurantSetting::current(),
+        ];
     }
 
-    /**
-     * Membuat nomor order unik.
-     */
-    private function generateOrderNumber(
-        RestaurantSetting $settings
-    ): string {
+    private function canEdit(Order $order): bool
+    {
+        return $order->payment_status !== 'paid'
+            && !in_array(
+                $order->status,
+                ['completed', 'cancelled'],
+                true
+            );
+    }
+
+    private function generateOrderNumber(): string
+    {
         do {
-            $number =
-                strtoupper($settings->order_number_prefix)
-                . '-'
+            $number = 'ORD-'
                 . now()->format('YmdHis')
                 . '-'
                 . strtoupper(Str::random(4));
@@ -1269,16 +838,10 @@ class RestaurantOrderController extends Controller
         return $number;
     }
 
-    /**
-     * Membuat nomor pembayaran unik.
-     */
-    private function generatePaymentNumber(
-        RestaurantSetting $settings
-    ): string {
+    private function generatePaymentNumber(): string
+    {
         do {
-            $number =
-                strtoupper($settings->payment_number_prefix)
-                . '-'
+            $number = 'PAY-'
                 . now()->format('YmdHis')
                 . '-'
                 . strtoupper(Str::random(4));
@@ -1291,9 +854,15 @@ class RestaurantOrderController extends Controller
         return $number;
     }
 
-    /**
-     * Status pesanan.
-     */
+    private function orderTypes(): array
+    {
+        return [
+            'dine_in',
+            'delivery',
+            'room_service',
+        ];
+    }
+
     private function statuses(): array
     {
         return [
@@ -1307,9 +876,6 @@ class RestaurantOrderController extends Controller
         ];
     }
 
-    /**
-     * Status item pesanan.
-     */
     private function itemStatuses(): array
     {
         return [
@@ -1318,6 +884,17 @@ class RestaurantOrderController extends Controller
             'ready',
             'served',
             'cancelled',
+        ];
+    }
+
+    private function paymentStatuses(): array
+    {
+        return [
+            'unpaid',
+            'pending',
+            'paid',
+            'failed',
+            'refunded',
         ];
     }
 }

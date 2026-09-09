@@ -1,13 +1,13 @@
 @extends('admin.layouts.main')
 
-@section('page_title', 'Buat Pesanan')
-@section('meta_description', 'Buat pesanan restoran baru.')
-@section('header_title', 'Buat Pesanan')
-@section('header_subtitle', 'Buat pesanan langsung untuk pelanggan restoran.')
-@section('header_icon', 'shopping-cart')
+@section('page_title', 'Edit Pesanan ' . $order->order_number)
+@section('meta_description', 'Edit pesanan restoran.')
+@section('header_title', 'Edit Pesanan')
+@section('header_subtitle', 'Perbarui pesanan ' . $order->order_number . '.')
+@section('header_icon', 'edit-2')
 
 @section('header_action')
-    <a href="{{ route('management.orders.index') }}" class="btn btn-light">
+    <a href="{{ route('management.orders.show', $order) }}" class="btn btn-light">
         <i data-feather="arrow-left" class="me-2"></i>
         Kembali
     </a>
@@ -26,8 +26,14 @@
         </a>
     </li>
 
+    <li class="breadcrumb-item">
+        <a href="{{ route('management.orders.show', $order) }}">
+            {{ $order->order_number }}
+        </a>
+    </li>
+
     <li class="breadcrumb-item active">
-        Buat Pesanan
+        Edit
     </li>
 @endsection
 
