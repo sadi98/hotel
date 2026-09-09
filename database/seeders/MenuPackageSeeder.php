@@ -1,7 +1,123 @@
 <?php
+
 namespace Database\Seeders;
+
 use App\Models\MenuItem;
 use App\Models\MenuPackage;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-class MenuPackageSeeder extends Seeder { public function run(): void { $ids=MenuItem::pluck('id','sku'); $sets=[['PKG-ROMANTIC','Romantic Dinner Package',900000,799000,2,[['FOD-001',1],['FOD-004',2],['FOD-008',1],['BEV-011',1]]],['PKG-FAMILY','Family Dinner Package',920000,799000,4,[['FOD-001',2],['FOD-005',2],['FOD-006',2],['BEV-006',4]]],['PKG-LUNCH','Indonesian Lunch Package',200000,175000,1,[['FOD-006',1],['BEV-006',1]]],['PKG-COFFEE','Coffee and Dessert Package',160000,139000,1,[['BEV-002',1],['FOD-008',1]]]]; DB::transaction(function()use($sets,$ids){foreach($sets as $i=>$s){$p=MenuPackage::updateOrCreate(['sku'=>$s[0]],['name'=>$s[1],'slug'=>str($s[1])->slug()->toString(),'description'=>"Curated {$s[1]} for a memorable hotel dining experience.",'normal_price'=>$s[2],'package_price'=>$s[3],'serving_count'=>$s[4],'minimum_order'=>1,'is_available'=>true,'is_featured'=>true,'sort_order'=>$i+1]);$p->items()->delete();foreach($s[5] as $j=>$it)$p->items()->create(['menu_item_id'=>$ids[$it[0]],'quantity'=>$it[1],'sort_order'=>$j+1]);}}); } }
+use Illuminate\Support\Str;
+use RuntimeException;
+
+class MenuPackageSeeder extends Seeder
+{
+    public function run(): void
+    {
+        $menuItemIds = MenuItem::query()
+            ->pluck('id', 'sku');
+
+        $packages = [
+            [
+                'sku' => 'PKG-ROMANTIC',
+                'name' => 'Romantic Dinner Package',
+                'normal_price' => 900000,
+                'package_price' => 799000,
+                'serving_count' => 2,
+                'items' => [
+                    ['sku' => 'FOD-001', 'quantity' => 1],
+                    ['sku' => 'FOD-004', 'quantity' => 2],
+                    ['sku' => 'FOD-008', 'quantity' => 1],
+                    ['sku' => 'BEV-011', 'quantity' => 1],
+                ],
+            ],
+            [
+                'sku' => 'PKG-FAMILY',
+                'name' => 'Family Dinner Package',
+                'normal_price' => 920000,
+                'package_price' => 799000,
+                'serving_count' => 4,
+                'items' => [
+                    ['sku' => 'FOD-001', 'quantity' => 2],
+                    ['sku' => 'FOD-005', 'quantity' => 2],
+                    ['sku' => 'FOD-006', 'quantity' => 2],
+                    ['sku' => 'BEV-006', 'quantity' => 4],
+                ],
+            ],
+            [
+                'sku' => 'PKG-LUNCH',
+                'name' => 'Indonesian Lunch Package',
+                'normal_price' => 200000,
+                'package_price' => 175000,
+                'serving_count' => 1,
+                'items' => [
+                    ['sku' => 'FOD-006', 'quantity' => 1],
+                    ['sku' => 'BEV-006', 'quantity' => 1],
+                ],
+            ],
+            [
+                'sku' => 'PKG-COFFEE',
+                'name' => 'Coffee and Dessert Package',
+                'normal_price' => 160000,
+                'package_price' => 139000,
+                'serving_count' => 1,
+                'items' => [
+                    ['sku' => 'BEV-002', 'quantity' => 1],
+                    ['sku' => 'FOD-008', 'quantity' => 1],
+                ],
+            ],
+        ];
+
+        DB::transaction(function () use ($packages, $menuItemIds): void {
+            foreach ($packages as $packageIndex => $packageData) {
+                $menuPackage = MenuPackage::query()->updateOrCreate(
+                    [
+                        'sku' => $packageData['sku'],
+                    ],
+                    [
+                        'name' => $packageData['name'],
+                        'slug' => Str::slug($packageData['name']),
+                        'description' => sprintf(
+                            'Curated %s for a memorable hotel dining experience.',
+                            $packageData['name']
+                        ),
+                        'normal_price' => $packageData['normal_price'],
+                        'package_price' => $packageData['package_price'],
+                        'serving_count' => $packageData['serving_count'],
+                        'minimum_order' => 1,
+                        'image' => null,
+                        'is_available' => true,
+                        'is_featured' => true,
+                        'available_from' => null,
+                        'available_until' => null,
+                        'sort_order' => $packageIndex + 1,
+                    ]
+                );
+
+                $syncItems = [];
+
+                foreach ($packageData['items'] as $itemIndex => $itemData) {
+                    $menuItemId = $menuItemIds->get($itemData['sku']);
+
+                    if (!$menuItemId) {
+                        throw new RuntimeException(
+                            "Menu item dengan SKU {$itemData['sku']} tidak ditemukan. "
+                                . "Pastikan MenuItemSeeder dijalankan sebelum MenuPackageSeeder."
+                        );
+                    }
+
+                    $syncItems[$menuItemId] = [
+                        'quantity' => $itemData['quantity'],
+                        'note' => null,
+                        'sort_order' => $itemIndex + 1,
+                    ];
+                }
+
+                /*
+                 * Hanya memperbarui tabel pivot menu_package_items.
+                 * Data utama pada tabel menu_items tidak ikut terhapus.
+                 */
+                $menuPackage->items()->sync($syncItems);
+            }
+        });
+    }
+}
